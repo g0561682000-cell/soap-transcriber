@@ -238,7 +238,7 @@
   // ---- 設定 ----
   const SOAP_INTERVAL_MS = 30000; // 30秒ごとに自動SOAP更新
   const GEMINI_MODEL = "gemini-2.0-flash";
-  const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent`;
 
   // ---- DOM ----
   const apiKeyInput  = document.getElementById("api-key");
@@ -394,10 +394,7 @@ ${finalTranscript}`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.2,
-          },
+          generationConfig: { temperature: 0.2 },
         }),
       });
 
@@ -410,7 +407,10 @@ ${finalTranscript}`;
       const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!raw) throw new Error("レスポンスが空です");
 
-      const soap = JSON.parse(raw);
+      // JSONブロックを抽出（```json ... ``` で囲まれている場合も対応）
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("JSON形式のレスポンスが見つかりません");
+      const soap = JSON.parse(jsonMatch[0]);
       updateSOAP(soap);
       setStatus(isRecording ? "録音中" : "待機中", isRecording ? "recording" : "");
     } catch (e) {
