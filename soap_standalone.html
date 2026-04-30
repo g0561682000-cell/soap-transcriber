@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>診察SOAP記録システム</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+      background: #f0f4f8;
+      color: #1a202c;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #2b6cb0;
+      color: #fff;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    header h1 { font-size: 1rem; font-weight: 700; white-space: nowrap; }
+
+    #status-badge {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 12px;
+      background: #90cdf4;
+      color: #1a365d;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    #status-badge.recording {
+      background: #fc8181;
+      color: #fff;
+      animation: pulse 1.2s infinite;
+    }
+    #status-badge.processing { background: #f6e05e; color: #744210; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+    .api-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+    .api-row label { font-size: 0.75rem; white-space: nowrap; }
+    .api-row input {
+      font-size: 0.75rem;
+      padding: 4px 8px;
+      border-radius: 5px;
+      border: none;
+      width: 260px;
+      color: #1a202c;
+    }
+
+    .controls { display: flex; gap: 8px; }
+    button {
+      padding: 7px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s;
+    }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    #btn-start  { background: #48bb78; color: #fff; }
+    #btn-stop   { background: #e53e3e; color: #fff; }
+    #btn-soap   { background: #805ad5; color: #fff; }
+    #btn-clear  { background: #a0aec0; color: #fff; }
+
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      padding: 14px;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .panel {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 9px 14px;
+      font-weight: 700;
+      font-size: 0.88rem;
+      border-bottom: 1px solid #e2e8f0;
+      color: #2d3748;
+      flex-shrink: 0;
+    }
+
+    #transcript-box {
+      padding: 12px 14px;
+      overflow-y: auto;
+      flex: 1;
+      font-size: 0.9rem;
+      line-height: 1.8;
+      color: #2d3748;
+    }
+
+    #transcript-box .final {
+      border-left: 3px solid #bee3f8;
+      padding-left: 10px;
+      margin-bottom: 6px;
+    }
+    #transcript-box .interim {
+      color: #a0aec0;
+      font-style: italic;
+      padding-left: 13px;
+    }
+
+    .soap-grid {
+      display: grid;
+      grid-template-rows: repeat(4, 1fr);
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .soap-section {
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid #e2e8f0;
+      overflow: hidden;
+      min-height: 0;
+    }
+    .soap-section:last-child { border-bottom: none; }
+
+    .soap-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 5px 13px 1px;
+      letter-spacing: .04em;
+      flex-shrink: 0;
+    }
+    .soap-label.s { color: #2b6cb0; }
+    .soap-label.o { color: #276749; }
+    .soap-label.a { color: #744210; }
+    .soap-label.p { color: #6b21a8; }
+
+    .soap-content {
+      padding: 3px 13px 8px;
+      font-size: 0.85rem;
+      line-height: 1.65;
+      overflow-y: auto;
+      flex: 1;
+      color: #2d3748;
+      white-space: pre-wrap;
+    }
+
+    .placeholder { color: #a0aec0; font-style: italic; }
+
+    footer {
+      text-align: center;
+      font-size: 0.7rem;
+      color: #718096;
+      padding: 6px;
+      background: #edf2f7;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>診察SOAP記録システム</h1>
+  <span id="status-badge">待機中</span>
+
+  <div class="api-row">
+    <label for="api-key">Gemini APIキー:</label>
+    <input id="api-key" type="password" placeholder="AIza..." autocomplete="off" />
+  </div>
+
+  <div class="controls">
+    <button id="btn-start">録音開始</button>
+    <button id="btn-stop"  disabled>録音停止</button>
+    <button id="btn-soap"  disabled>SOAP更新</button>
+    <button id="btn-clear">クリア</button>
+  </div>
+</header>
+
+<div class="main">
+  <!-- 左: 文字起こし -->
+  <div class="panel">
+    <div class="panel-header">リアルタイム文字起こし</div>
+    <div id="transcript-box">
+      <span class="placeholder">「録音開始」を押すと会話が表示されます（Chrome / Edge 推奨）</span>
+    </div>
+  </div>
+
+  <!-- 右: SOAP -->
+  <div class="panel">
+    <div class="panel-header">SOAP記録（自動生成）</div>
+    <div class="soap-grid">
+      <div class="soap-section">
+        <div class="soap-label s">S — 主観的情報（Subjective）</div>
+        <div class="soap-content" id="soap-s"><span class="placeholder">患者の訴え・症状</span></div>
+      </div>
+      <div class="soap-section">
+        <div class="soap-label o">O — 客観的情報（Objective）</div>
+        <div class="soap-content" id="soap-o"><span class="placeholder">診察所見・バイタル</span></div>
+      </div>
+      <div class="soap-section">
+        <div class="soap-label a">A — 評価（Assessment）</div>
+        <div class="soap-content" id="soap-a"><span class="placeholder">診断・臨床的判断</span></div>
+      </div>
+      <div class="soap-section">
+        <div class="soap-label p">P — 計画（Plan）</div>
+        <div class="soap-content" id="soap-p"><span class="placeholder">治療方針・処方・次回指示</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  ※ 診察補助ツールです。医師による最終確認が必要です。&nbsp;|&nbsp;
+  APIキーの管理: <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#4299e1">aistudio.google.com/apikey</a>
+</footer>
+
+<script>
+  // ---- 設定 ----
+  const SOAP_INTERVAL_MS = 30000; // 30秒ごとに自動SOAP更新
+  const GEMINI_MODEL = "gemini-1.5-flash";
+  const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+  // ---- DOM ----
+  const apiKeyInput  = document.getElementById("api-key");
+  const btnStart     = document.getElementById("btn-start");
+  const btnStop      = document.getElementById("btn-stop");
+  const btnSoap      = document.getElementById("btn-soap");
+  const btnClear     = document.getElementById("btn-clear");
+  const badge        = document.getElementById("status-badge");
+  const transcriptBox = document.getElementById("transcript-box");
+  const soapEls = {
+    subjective: document.getElementById("soap-s"),
+    objective:  document.getElementById("soap-o"),
+    assessment: document.getElementById("soap-a"),
+    plan:       document.getElementById("soap-p"),
+  };
+
+  // ---- 状態 ----
+  let recognition = null;
+  let finalTranscript = "";
+  let soapTimer = null;
+  let isRecording = false;
+
+  // APIキーをlocalStorageに保存/復元
+  const STORAGE_KEY = "gemini_api_key";
+  apiKeyInput.value = localStorage.getItem(STORAGE_KEY) || "";
+  apiKeyInput.addEventListener("input", () => {
+    localStorage.setItem(STORAGE_KEY, apiKeyInput.value.trim());
+  });
+
+  // ---- 音声認識 ----
+  function startRecording() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("このブラウザは音声認識に対応していません。\nChrome または Edge をお使いください。");
+      return;
+    }
+    if (!apiKeyInput.value.trim()) {
+      alert("Gemini APIキーを入力してください。");
+      return;
+    }
+
+    recognition = new SpeechRecognition();
+    recognition.lang = "ja-JP";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    // 途中経過テキスト用の要素
+    let interimEl = null;
+
+    recognition.onstart = () => {
+      isRecording = true;
+      setStatus("録音中", "recording");
+      btnStart.disabled = true;
+      btnStop.disabled  = false;
+      btnSoap.disabled  = false;
+
+      // 30秒ごとにSOAP自動更新
+      soapTimer = setInterval(() => {
+        if (finalTranscript.trim()) generateSOAP();
+      }, SOAP_INTERVAL_MS);
+    };
+
+    recognition.onresult = (e) => {
+      // placeholder を消す
+      const ph = transcriptBox.querySelector(".placeholder");
+      if (ph) ph.remove();
+
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const result = e.results[i];
+        if (result.isFinal) {
+          const text = result[0].transcript.trim();
+          if (text) {
+            finalTranscript += text + "\n";
+            const div = document.createElement("div");
+            div.className = "final";
+            div.textContent = text;
+            // interimElの前に挿入するか末尾に追加
+            if (interimEl && transcriptBox.contains(interimEl)) {
+              transcriptBox.insertBefore(div, interimEl);
+            } else {
+              transcriptBox.appendChild(div);
+            }
+          }
+          interim = "";
+        } else {
+          interim += result[0].transcript;
+        }
+      }
+
+      // 途中経過表示
+      if (!interimEl) {
+        interimEl = document.createElement("div");
+        interimEl.className = "interim";
+        transcriptBox.appendChild(interimEl);
+      }
+      interimEl.textContent = interim;
+      transcriptBox.scrollTop = transcriptBox.scrollHeight;
+    };
+
+    recognition.onerror = (e) => {
+      if (e.error === "no-speech") return; // 無音は無視
+      console.error("音声認識エラー:", e.error);
+      setStatus("エラー: " + e.error, "");
+    };
+
+    recognition.onend = () => {
+      // 録音中なら自動再起動（Chromeは一定時間後に停止するため）
+      if (isRecording) recognition.start();
+    };
+
+    recognition.start();
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    if (recognition) { recognition.onend = null; recognition.stop(); recognition = null; }
+    clearInterval(soapTimer);
+    btnStart.disabled = false;
+    btnStop.disabled  = true;
+    btnSoap.disabled  = true;
+    setStatus("待機中", "");
+
+    // 録音停止時に最終SOAP生成
+    if (finalTranscript.trim()) generateSOAP();
+  }
+
+  // ---- Gemini API でSOAP生成 ----
+  async function generateSOAP() {
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey || !finalTranscript.trim()) return;
+
+    setStatus("SOAP生成中…", "processing");
+
+    const prompt = `あなたは医療記録の専門家です。以下の診察会話の文字起こしを読み、SOAP形式の医療記録を日本語で作成してください。
+
+必ずJSON形式で返してください。キーは subjective, objective, assessment, plan の4つのみ。
+
+ガイドライン:
+- subjective（主観的情報）: 患者が述べた症状・訴え・病歴
+- objective（客観的情報）: 医師が観察した所見・バイタル・検査値（会話から読み取れる範囲のみ）
+- assessment（評価）: 診断名・疑い・臨床的判断
+- plan（計画）: 治療方針・処方・検査指示・次回受診の指示
+
+情報が不足している項目は「会話内容から確認できず」と記載してください。
+
+【診察会話の文字起こし】
+${finalTranscript}`;
+
+    try {
+      const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.2,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || res.statusText);
+      }
+
+      const data = await res.json();
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) throw new Error("レスポンスが空です");
+
+      const soap = JSON.parse(raw);
+      updateSOAP(soap);
+      setStatus(isRecording ? "録音中" : "待機中", isRecording ? "recording" : "");
+    } catch (e) {
+      console.error("SOAP生成エラー:", e);
+      setStatus("SOAP生成エラー: " + e.message, "");
+    }
+  }
+
+  function updateSOAP(data) {
+    const map = { subjective: "subjective", objective: "objective", assessment: "assessment", plan: "plan" };
+    for (const [key] of Object.entries(map)) {
+      if (data[key]) soapEls[key].textContent = data[key];
+    }
+  }
+
+  // ---- クリア ----
+  function clearAll() {
+    finalTranscript = "";
+    transcriptBox.innerHTML = '<span class="placeholder">「録音開始」を押すと会話が表示されます（Chrome / Edge 推奨）</span>';
+    const labels = { subjective: "患者の訴え・症状", objective: "診察所見・バイタル",
+                     assessment: "診断・臨床的判断", plan: "治療方針・処方・次回指示" };
+    for (const [key, el] of Object.entries(soapEls)) {
+      el.innerHTML = `<span class="placeholder">${labels[key]}</span>`;
+    }
+    setStatus("待機中", "");
+  }
+
+  function setStatus(text, cls) {
+    badge.textContent = text;
+    badge.className = cls || "";
+  }
+
+  // ---- イベント ----
+  btnStart.addEventListener("click", startRecording);
+  btnStop.addEventListener("click",  stopRecording);
+  btnSoap.addEventListener("click",  generateSOAP);
+  btnClear.addEventListener("click", clearAll);
+</script>
+</body>
+</html>
